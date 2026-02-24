@@ -93,6 +93,48 @@ function handleSqlActiveChange(event: { value: string }) {
   socket.sqlSetActiveConnection(event.value);
 }
 
+// ── Knowledge Base ──────────────────────────────────────
+const knowledgeEditor = ref(holo.knowledgeContent);
+const knowledgeSaving = ref(false);
+const knowledgeSaved = ref(false);
+const fileInput = ref<HTMLInputElement | null>(null);
+
+// Sync editor when server sends content
+watch(() => holo.knowledgeContent, (val) => {
+  knowledgeEditor.value = val;
+});
+
+function handleKnowledgeSave() {
+  knowledgeSaving.value = true;
+  knowledgeSaved.value = false;
+  socket.knowledgeSave(knowledgeEditor.value);
+  // Simple feedback
+  setTimeout(() => {
+    knowledgeSaving.value = false;
+    knowledgeSaved.value = true;
+    setTimeout(() => { knowledgeSaved.value = false; }, 2000);
+  }, 500);
+}
+
+function handleImportFile() {
+  fileInput.value?.click();
+}
+
+function onFileSelected(event: Event) {
+  const target = event.target as HTMLInputElement;
+  const file = target.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const text = e.target?.result as string;
+    knowledgeEditor.value = text;
+  };
+  reader.readAsText(file);
+  target.value = ''; // reset for re-upload
+}
+
+// ── SQL Agent ────────────────────────────────────────────
+
 function handleAddSqlConnection() {
   const name = newSqlConn.value.name.trim();
   if (!name || !newSqlConn.value.database.trim()) return;
@@ -143,6 +185,7 @@ function handleAddSqlConnection() {
         <Tab value="1"><i class="pi pi-comments mr-1"></i> Chat</Tab>
         <Tab value="2"><i class="pi pi-cog mr-1"></i> Config</Tab>
         <Tab value="3"><i class="pi pi-user mr-1"></i> Personalidad</Tab>
+        <Tab value="4"><i class="pi pi-book mr-1"></i> Conocimiento</Tab>
       </TabList>
 
       <TabPanels>
@@ -632,6 +675,76 @@ function handleAddSqlConnection() {
             </div>
           </div>
         </TabPanel>
+
+        <!-- ═══════════════════════════════════════════════ -->
+        <!-- TAB 5: Conocimiento                             -->
+        <!-- ═══════════════════════════════════════════════ -->
+        <TabPanel value="4">
+          <div class="panel-content">
+            <div class="section">
+              <h2 class="section-title">
+                <i class="pi pi-book mr-2"></i> Base de Conocimiento
+              </h2>
+
+              <p class="text-sm text-gray-400 mb-3">
+                Escribi o pega informacion que Holo pueda usar para responder.
+              </p>
+
+              <!-- Editor -->
+              <textarea
+                v-model="knowledgeEditor"
+                class="knowledge-editor"
+                placeholder="Ej: La empresa abre de lunes a viernes de 9 a 18hs.&#10;El gato de Florencia se llama Melon.&#10;..."
+                rows="14"
+              ></textarea>
+
+              <!-- Stats -->
+              <div class="flex items-center justify-between mt-2 mb-3">
+                <span class="text-xs text-gray-500">
+                  {{ knowledgeEditor.length }} caracteres
+                  <span v-if="holo.knowledgeChunkCount > 0">
+                    &middot; {{ holo.knowledgeChunkCount }} fragmentos
+                  </span>
+                </span>
+                <span v-if="knowledgeSaved" class="text-xs text-green-400">
+                  <i class="pi pi-check mr-1"></i>Guardado
+                </span>
+              </div>
+
+              <!-- Actions -->
+              <div class="flex gap-2 flex-wrap">
+                <Button
+                  label="Guardar"
+                  icon="pi pi-save"
+                  size="small"
+                  severity="info"
+                  :loading="knowledgeSaving"
+                  @click="handleKnowledgeSave"
+                />
+                <Button
+                  label="Importar archivo"
+                  icon="pi pi-upload"
+                  size="small"
+                  severity="secondary"
+                  @click="handleImportFile"
+                />
+                <input
+                  ref="fileInput"
+                  type="file"
+                  accept=".md,.txt"
+                  class="hidden"
+                  @change="onFileSelected"
+                />
+              </div>
+
+              <p class="text-xs text-gray-600 mt-3">
+                <i class="pi pi-info-circle mr-1"></i>
+                Esta informacion se usa como contexto para las respuestas de Holo.
+                Se guarda en el servidor y persiste entre reinicios.
+              </p>
+            </div>
+          </div>
+        </TabPanel>
       </TabPanels>
     </Tabs>
   </div>
@@ -897,5 +1010,30 @@ function handleAddSqlConnection() {
   font-size: 0.7rem;
   font-weight: 400;
   opacity: 0.6;
+}
+
+/* Knowledge editor */
+.knowledge-editor {
+  width: 100%;
+  min-height: 200px;
+  background: #111827;
+  color: #e5e7eb;
+  border: 1px solid #374151;
+  border-radius: 8px;
+  padding: 0.75rem;
+  font-family: inherit;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.knowledge-editor:focus {
+  border-color: #00f0ff;
+}
+
+.knowledge-editor::placeholder {
+  color: #4b5563;
 }
 </style>

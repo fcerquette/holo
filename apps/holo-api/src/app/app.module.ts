@@ -8,6 +8,7 @@ import { RagService } from './rag.service';
 import { SqlService } from './sql.service';
 import { MemoryRagService } from './memory-rag.service';
 import { PersonalityService } from './personality.service';
+import { KnowledgeService } from './knowledge.service';
 
 @Module({
   imports: [],
@@ -21,6 +22,7 @@ import { PersonalityService } from './personality.service';
     SqlService,
     MemoryRagService,
     PersonalityService,
+    KnowledgeService,
   ],
 })
 export class AppModule {}

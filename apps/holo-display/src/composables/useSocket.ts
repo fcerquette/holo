@@ -167,6 +167,21 @@ export function useSocket() {
       console.log('[Socket] personality:status:', status);
       holo.updatePersonality(status);
     });
+
+    // Knowledge events
+    socket.on('knowledge:status', (status: { chunkCount: number }) => {
+      console.log('[Socket] knowledge:status:', status);
+      holo.updateKnowledgeStatus(status);
+    });
+
+    socket.on('knowledge:content', (data: { content: string }) => {
+      console.log('[Socket] knowledge:content received, length:', data.content.length);
+      holo.updateKnowledgeContent(data.content);
+    });
+
+    socket.on('knowledge:saved', (data: { success: boolean }) => {
+      console.log('[Socket] knowledge:saved:', data);
+    });
   }
 
   function triggerTTS(text: string) {
@@ -283,6 +298,15 @@ export function useSocket() {
     socket?.emit('personality:getStatus');
   }
 
+  // Knowledge methods
+  function knowledgeSave(content: string) {
+    socket?.emit('knowledge:save', { content });
+  }
+
+  function knowledgeGet() {
+    socket?.emit('knowledge:get');
+  }
+
   // Register callback for TTS — supports multiple listeners
   function onChatResponse(callback: (text: string) => void) {
     // Avoid duplicates
@@ -329,6 +353,8 @@ export function useSocket() {
     sqlGetStatus,
     personalitySet,
     personalityGetStatus,
+    knowledgeSave,
+    knowledgeGet,
     onChatResponse,
     offChatResponse,
   };

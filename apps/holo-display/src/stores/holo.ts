@@ -77,6 +77,10 @@ export const useHoloStore = defineStore('holo', () => {
   });
   const sqlRefreshing = ref(false);
 
+  // Knowledge
+  const knowledgeContent = ref('');
+  const knowledgeChunkCount = ref(0);
+
   function addChatMessage(role: 'user' | 'assistant', text: string) {
     chatHistory.value.push({ role, text, timestamp: Date.now() });
     // Keep last 50 messages
@@ -137,6 +141,14 @@ export const useHoloStore = defineStore('holo', () => {
     sqlRefreshing.value = refreshing;
   }
 
+  function updateKnowledgeContent(content: string) {
+    knowledgeContent.value = content;
+  }
+
+  function updateKnowledgeStatus(status: { chunkCount: number }) {
+    knowledgeChunkCount.value = status.chunkCount;
+  }
+
   return {
     speaking,
     thinking,
@@ -152,6 +164,8 @@ export const useHoloStore = defineStore('holo', () => {
     ragIndexing,
     sqlStatus,
     sqlRefreshing,
+    knowledgeContent,
+    knowledgeChunkCount,
     personalityStatus,
     addChatMessage,
     loadChatHistory,
@@ -165,5 +179,7 @@ export const useHoloStore = defineStore('holo', () => {
     setRagIndexing,
     updateSqlStatus,
     setSqlRefreshing,
+    updateKnowledgeContent,
+    updateKnowledgeStatus,
   };
 });

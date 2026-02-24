@@ -5,6 +5,7 @@ import { RagService } from './rag.service';
 import { SqlService } from './sql.service';
 import { MemoryRagService } from './memory-rag.service';
 import { PersonalityService } from './personality.service';
+import { KnowledgeService } from './knowledge.service';
 
 export interface ChatResponse {
   text: string;
@@ -28,6 +29,7 @@ export class LlmService {
     private readonly sqlService: SqlService,
     private readonly memoryRagService: MemoryRagService,
     private readonly personalityService: PersonalityService,
+    private readonly knowledgeService: KnowledgeService,
   ) {
     this.client = new Groq({
       apiKey: process.env.GROQ_API_KEY || '',
@@ -180,6 +182,9 @@ export class LlmService {
 
       // RAG: only inject if SQL is NOT active (avoid double context cost)
       if (!sqlActive) {
+        let contextInjected = false;
+
+        // 1. Try Ollama RAG first (embeddings-based, higher quality)
         const ragContext =
           await this.ragService.retrieveContext(userMessage);
         if (ragContext) {
@@ -187,6 +192,18 @@ export class LlmService {
             `\n\nInfo de tu base de conocimiento:\n${ragContext}` +
             `\nUsá esta info si es relevante.`;
           this.logger.debug('RAG context injected into prompt');
+          contextInjected = true;
+        }
+
+        // 2. Fallback: keyword-based knowledge (works without Ollama)
+        if (!contextInjected) {
+          const knowledgeContext = this.knowledgeService.retrieveContext(userMessage);
+          if (knowledgeContext) {
+            systemPrompt +=
+              `\n\nInfo de tu base de conocimiento:\n${knowledgeContext}` +
+              `\nUsá esta info si es relevante.`;
+            this.logger.debug('Knowledge context (keywords) injected into prompt');
+          }
         }
       }
 

@@ -15,6 +15,7 @@ import { RagService } from './rag.service';
 import { SqlService, SqlConnectionConfig } from './sql.service';
 import { MemoryRagService } from './memory-rag.service';
 import { PersonalityService } from './personality.service';
+import { KnowledgeService } from './knowledge.service';
 
 type HoloExpression = 'neutral' | 'happy' | 'surprised' | 'sad' | 'angry' | 'embarrassed';
 
@@ -54,6 +55,7 @@ export class HoloGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly sqlService: SqlService,
     private readonly memoryRagService: MemoryRagService,
     private readonly personalityService: PersonalityService,
+    private readonly knowledgeService: KnowledgeService,
   ) {}
 
   handleConnection(client: Socket) {
@@ -90,6 +92,10 @@ export class HoloGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     // Send personality config
     client.emit('personality:status', this.personalityService.getPersonality());
+
+    // Send knowledge status and content
+    client.emit('knowledge:status', this.knowledgeService.getStatus());
+    client.emit('knowledge:content', { content: this.knowledgeService.getContent() });
   }
 
   handleDisconnect(client: Socket) {
@@ -365,5 +371,24 @@ export class HoloGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
     this.server.emit('memory:status', this.memoryRagService.getStatus());
     this.logger.log(`Memory forget: "${data.keyword}" → ${removed} removed`);
+  }
+
+  // ── Knowledge Base ──────────────────────────────────
+
+  @SubscribeMessage('knowledge:get')
+  handleKnowledgeGet(@ConnectedSocket() client: Socket) {
+    client.emit('knowledge:content', { content: this.knowledgeService.getContent() });
+    client.emit('knowledge:status', this.knowledgeService.getStatus());
+  }
+
+  @SubscribeMessage('knowledge:save')
+  handleKnowledgeSave(
+    @MessageBody() data: { content: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const status = this.knowledgeService.setContent(data.content);
+    this.server.emit('knowledge:status', status);
+    client.emit('knowledge:saved', { success: true });
+    this.logger.log(`Knowledge saved: ${status.contentLength} chars, ${status.chunkCount} chunks`);
   }
 }
