@@ -50,7 +50,7 @@ export const useHoloStore = defineStore('holo', () => {
   const skinColor = ref('#1a1a2e');
   const message = ref('');
   const chatHistory = ref<ChatMessage[]>([]);
-  const displayMode = ref<'hologram' | '2d'>('hologram');
+  const displayMode = ref<'hologram' | '2d'>('2d');
 
   // Owner
   const ownerName = ref('');
