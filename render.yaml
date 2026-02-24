@@ -17,7 +17,6 @@ services:
   - type: web
     name: holo-display
     runtime: static
-    plan: free
     buildCommand: npm ci && npx nx build @org/holo-display
     staticPublishPath: apps/holo-display/dist
     envVars:
