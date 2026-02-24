@@ -4,12 +4,12 @@ services:
     name: holo-api
     runtime: node
     plan: free
-    buildCommand: npm ci && npx nx build holo-api
+    buildCommand: npm ci --include=dev && npx nx build holo-api
     startCommand: node apps/holo-api/dist/main.js
     envVars:
       - key: NODE_ENV
         value: production
-      - key: GROQ_API_KEY
+- key: GROQ_API_KEY
         sync: false  # set manually in Render dashboard
     healthCheckPath: /api
 
@@ -17,7 +17,7 @@ services:
   - type: web
     name: holo-display
     runtime: static
-    buildCommand: npm ci && npx nx build @org/holo-display
+    buildCommand: npm ci --include=dev && npx nx build @org/holo-display
     staticPublishPath: apps/holo-display/dist
     envVars:
       - key: VITE_API_URL
