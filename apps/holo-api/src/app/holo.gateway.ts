@@ -44,7 +44,7 @@ export class HoloGateway implements OnGatewayConnection, OnGatewayDisconnect {
     glowColor: '#00f0ff',
     skinColor: '#1a1a2e',
     message: '',
-    displayMode: 'hologram',
+    displayMode: '2d',
   };
 
   constructor(
