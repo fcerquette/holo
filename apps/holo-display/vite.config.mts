@@ -16,9 +16,9 @@ export default defineConfig(() => ({
   server: {
     port: 4200,
     host: '0.0.0.0',
-    https: hasCerts
-      ? { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) }
-      : true, // fallback to basicSsl-style self-signed if certs missing
+    ...(hasCerts && {
+      https: { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) },
+    }),
   },
   preview: {
     port: 4300,
