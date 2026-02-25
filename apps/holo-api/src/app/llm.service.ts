@@ -41,17 +41,30 @@ export class LlmService {
     return this.personalityService.getSystemPrompt();
   }
 
-  /** Build the system prompt, including owner info if available */
-  private getSystemPrompt(): string {
+  /** Build the system prompt, including owner + session user info */
+  private getSystemPrompt(sessionId: string): string {
+    let prompt = this.baseSystemPrompt;
     const owner = this.conversationStore.getOwnerName();
+    const sessionName = this.conversationStore.getSessionName(sessionId);
+
     if (owner) {
-      return (
-        this.baseSystemPrompt +
-        `\nTu dueño/a se llama "${owner}". Lo/la conocés y le tenés cariño. ` +
-        `Podés mencionarlo/a por su nombre de vez en cuando.`
-      );
+      prompt +=
+        `\nTu dueño/a se llama "${owner}". Lo/la conocés y le tenés cariño.`;
     }
-    return this.baseSystemPrompt;
+
+    if (sessionName) {
+      if (owner && sessionName.toLowerCase() === owner.toLowerCase()) {
+        // The person chatting IS the owner
+        prompt += ` Estás hablando con tu dueño/a ${sessionName}. Podés mencionarlo/a por su nombre.`;
+      } else {
+        // Someone else is chatting
+        prompt += `\nEstás hablando con "${sessionName}". Referite a esta persona por su nombre.`;
+      }
+    } else if (owner) {
+      prompt += ` Podés mencionarlo/a por su nombre de vez en cuando.`;
+    }
+
+    return prompt;
   }
 
   /** Extract SQL code block from LLM response */
@@ -143,17 +156,17 @@ export class LlmService {
     return { cleanText, expression };
   }
 
-  async chat(userMessage: string): Promise<ChatResponse> {
+  async chat(userMessage: string, sessionId: string): Promise<ChatResponse> {
     try {
       // Persist user message
-      this.conversationStore.addUserMessage(userMessage);
+      this.conversationStore.addUserMessage(sessionId, userMessage);
 
       // Check if SQL is active
       const sqlEnabled = this.sqlService.isEnabled();
       const sqlActive = sqlEnabled && this.sqlService.hasActiveSchema();
 
       // Build LLM history with Memory RAG optimization
-      const fullHistory = this.conversationStore.getLlmHistory();
+      const fullHistory = this.conversationStore.getLlmHistory(sessionId);
       let llmHistory: typeof fullHistory;
       let memoryContext: string | null = null;
 
@@ -168,12 +181,12 @@ export class LlmService {
           this.logger.debug('Memory context injected into prompt');
         }
       } else {
-        // Fallback: full history (current behavior)
-        llmHistory = fullHistory;
+        // Fallback: last 6 messages (3 turnos usuario-asistente) — balance contexto vs tokens
+        llmHistory = fullHistory.slice(-6);
       }
 
       // Build system prompt
-      let systemPrompt = this.getSystemPrompt();
+      let systemPrompt = this.getSystemPrompt(sessionId);
 
       // Memory RAG: inject relevant memories
       if (memoryContext) {
@@ -288,7 +301,7 @@ export class LlmService {
       const { cleanText, expression } = this.extractExpression(assistantMessage);
 
       // Persist clean assistant response (without expression tag)
-      this.conversationStore.addAssistantMessage(cleanText);
+      this.conversationStore.addAssistantMessage(sessionId, cleanText);
 
       // Async: create memory embedding (non-blocking)
       this.memoryRagService
@@ -338,8 +351,8 @@ export class LlmService {
     }
   }
 
-  clearHistory() {
-    this.conversationStore.clear();
+  clearHistory(sessionId: string) {
+    this.conversationStore.clearSession(sessionId);
     this.memoryRagService.clear();
   }
 }

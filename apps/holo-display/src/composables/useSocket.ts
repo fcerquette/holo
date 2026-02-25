@@ -1,10 +1,12 @@
 import { ref } from 'vue';
 import { io, Socket } from 'socket.io-client';
-import { useHoloStore, type HoloExpression } from '../stores/holo';
+import { useHoloStore, type HoloExpression, type SessionInfo, type ChatMessage } from '../stores/holo';
 
 // Auto-detect API URL: match protocol + hostname from current page (avoids Mixed Content block on mobile)
 const protocol = window.location.protocol === 'https:' ? 'https' : 'http';
 const API_URL = import.meta.env.VITE_API_URL || `${protocol}://${window.location.hostname}:3000`;
+
+const SESSION_KEY = 'holo-session-id';
 
 let socket: Socket | null = null;
 const connected = ref(false);
@@ -18,8 +20,12 @@ export function useSocket() {
   function connect() {
     if (socket?.connected) return;
 
+    // Send existing sessionId if we have one (for reconnection)
+    const storedSessionId = localStorage.getItem(SESSION_KEY) || '';
+
     socket = io(API_URL, {
       transports: ['websocket', 'polling'],
+      query: storedSessionId ? { sessionId: storedSessionId } : {},
     });
 
     socket.on('connect', () => {
@@ -30,6 +36,34 @@ export function useSocket() {
     socket.on('disconnect', () => {
       connected.value = false;
       console.log('[Socket] Disconnected');
+    });
+
+    // Session events
+    socket.on('session:id', (data: { sessionId: string }) => {
+      console.log('[Socket] session:id:', data.sessionId);
+      localStorage.setItem(SESSION_KEY, data.sessionId);
+      holo.setSessionId(data.sessionId);
+    });
+
+    socket.on('session:name', (data: { name: string }) => {
+      console.log('[Socket] session:name:', data.name);
+      holo.setSessionName(data.name);
+      holo.showSessionSetup = false;
+    });
+
+    socket.on('session:askName', () => {
+      console.log('[Socket] session:askName — need to ask user for session name');
+      holo.showSessionSetup = true;
+    });
+
+    socket.on('sessions:update', (sessions: SessionInfo[]) => {
+      console.log('[Socket] sessions:update:', sessions.length, 'sessions');
+      holo.updateSessions(sessions);
+    });
+
+    socket.on('session:history', (data: { sessionId: string; name: string; messages: ChatMessage[] }) => {
+      console.log('[Socket] session:history for', data.sessionId, ':', data.messages.length, 'messages');
+      holo.setViewingSession(data.sessionId, data.name, data.messages);
     });
 
     // State sync
@@ -85,9 +119,7 @@ export function useSocket() {
     socket.on('chat:response', (data: { text: string }) => {
       console.log('[Socket] chat:response received:', data.text);
       holo.addChatMessage('assistant', data.text);
-      holo.speaking = true;
-      holo.message = data.text;
-      triggerTTS(data.text);
+      // TTS is handled by state:speak (broadcast) — don't duplicate here
     });
 
     socket.on('chat:historyCleared', () => {
@@ -231,8 +263,8 @@ export function useSocket() {
     socket?.emit('setDisplayMode', { mode });
   }
 
-  function clearHistory() {
-    socket?.emit('clearHistory');
+  function clearHistory(sessionId?: string) {
+    socket?.emit('clearHistory', { sessionId });
   }
 
   function setOwnerName(name: string) {
@@ -307,6 +339,19 @@ export function useSocket() {
     socket?.emit('knowledge:get');
   }
 
+  // Session methods
+  function sessionSetName(name: string) {
+    socket?.emit('session:setName', { name });
+  }
+
+  function sessionsGetAll() {
+    socket?.emit('sessions:getAll');
+  }
+
+  function sessionGetHistory(sessionId: string) {
+    socket?.emit('session:getHistory', { sessionId });
+  }
+
   // Register callback for TTS — supports multiple listeners
   function onChatResponse(callback: (text: string) => void) {
     // Avoid duplicates
@@ -355,6 +400,9 @@ export function useSocket() {
     personalityGetStatus,
     knowledgeSave,
     knowledgeGet,
+    sessionSetName,
+    sessionsGetAll,
+    sessionGetHistory,
     onChatResponse,
     offChatResponse,
   };

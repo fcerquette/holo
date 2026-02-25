@@ -13,7 +13,30 @@ interface DisplayMessage {
   timestamp: number;
 }
 
+export interface Session {
+  id: string;
+  name: string;
+  llmHistory: LlmMessage[];
+  chatHistory: DisplayMessage[];
+  lastActive: number;
+  connected: boolean;
+}
+
+export interface SessionInfo {
+  id: string;
+  name: string;
+  lastActive: number;
+  connected: boolean;
+  messageCount: number;
+}
+
 interface ConversationData {
+  ownerName: string | null;
+  sessions: Record<string, Session>;
+}
+
+// Legacy format (pre-sessions) for migration
+interface LegacyConversationData {
   ownerName: string | null;
   llmHistory: LlmMessage[];
   chatHistory: DisplayMessage[];
@@ -24,8 +47,7 @@ export class ConversationStore {
   private logger = new Logger('ConversationStore');
   private data: ConversationData = {
     ownerName: null,
-    llmHistory: [],
-    chatHistory: [],
+    sessions: {},
   };
   private filePath: string;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -59,26 +81,51 @@ export class ConversationStore {
     try {
       if (fs.existsSync(this.filePath)) {
         const raw = fs.readFileSync(this.filePath, 'utf-8');
-        const parsed = JSON.parse(raw) as ConversationData;
-        this.data = {
-          ownerName: parsed.ownerName || null,
-          llmHistory: Array.isArray(parsed.llmHistory)
-            ? parsed.llmHistory
-            : [],
-          chatHistory: Array.isArray(parsed.chatHistory)
-            ? parsed.chatHistory
-            : [],
-        };
-        this.logger.log(
-          `Loaded ${this.data.llmHistory.length} LLM messages, ` +
-            `${this.data.chatHistory.length} chat messages from disk`
-        );
+        const parsed = JSON.parse(raw);
+
+        // Check if this is the new format (has sessions) or legacy format
+        if (parsed.sessions && typeof parsed.sessions === 'object') {
+          // New format
+          this.data = {
+            ownerName: parsed.ownerName || null,
+            sessions: parsed.sessions,
+          };
+          const sessionCount = Object.keys(this.data.sessions).length;
+          this.logger.log(`Loaded ${sessionCount} sessions from disk`);
+        } else {
+          // Legacy format — migrate
+          const legacy = parsed as LegacyConversationData;
+          this.data = {
+            ownerName: legacy.ownerName || null,
+            sessions: {},
+          };
+
+          // Migrate existing history to a "legacy" session
+          const legacyLlm = Array.isArray(legacy.llmHistory) ? legacy.llmHistory : [];
+          const legacyChat = Array.isArray(legacy.chatHistory) ? legacy.chatHistory : [];
+          if (legacyLlm.length > 0 || legacyChat.length > 0) {
+            this.data.sessions['legacy'] = {
+              id: 'legacy',
+              name: legacy.ownerName || 'Usuario',
+              llmHistory: legacyLlm,
+              chatHistory: legacyChat,
+              lastActive: Date.now(),
+              connected: false,
+            };
+            this.logger.log(
+              `Migrated legacy history (${legacyLlm.length} LLM, ${legacyChat.length} chat messages) to "legacy" session`
+            );
+          }
+
+          // Save migrated data
+          this.scheduleSave();
+        }
       } else {
         this.logger.log('No conversation file found, starting fresh');
       }
     } catch (error: unknown) {
       this.logger.warn(`Failed to load conversations: ${(error as Error).message}`);
-      this.data = { ownerName: null, llmHistory: [], chatHistory: [] };
+      this.data = { ownerName: null, sessions: {} };
     }
   }
 
@@ -123,68 +170,137 @@ export class ConversationStore {
     this.scheduleSave();
   }
 
-  // ── Conversation History ───────────────────────────────
+  // ── Session Management ─────────────────────────────────
 
-  /** Get LLM history (for building the messages array for Groq) */
-  getLlmHistory(): LlmMessage[] {
-    return [...this.data.llmHistory];
+  /** Get or create a session */
+  getOrCreateSession(sessionId: string, name = ''): Session {
+    if (!this.data.sessions[sessionId]) {
+      this.data.sessions[sessionId] = {
+        id: sessionId,
+        name,
+        llmHistory: [],
+        chatHistory: [],
+        lastActive: Date.now(),
+        connected: true,
+      };
+      this.logger.log(`New session created: ${sessionId} (name: "${name}")`);
+      this.scheduleSave();
+    }
+    return this.data.sessions[sessionId];
   }
 
-  /** Get display chat history (for sending to frontend clients) */
-  getChatHistory(): DisplayMessage[] {
-    return [...this.data.chatHistory];
+  /** Mark session as connected/disconnected */
+  setSessionConnected(sessionId: string, connected: boolean): void {
+    const session = this.data.sessions[sessionId];
+    if (session) {
+      session.connected = connected;
+      session.lastActive = Date.now();
+      this.scheduleSave();
+    }
   }
 
-  /** Add a user message to both histories */
-  addUserMessage(content: string): void {
+  /** Update session name */
+  setSessionName(sessionId: string, name: string): void {
+    const session = this.data.sessions[sessionId];
+    if (session) {
+      session.name = name.trim();
+      session.lastActive = Date.now();
+      this.logger.log(`Session ${sessionId} name set to: "${session.name}"`);
+      this.scheduleSave();
+    }
+  }
+
+  /** Get session name */
+  getSessionName(sessionId: string): string {
+    return this.data.sessions[sessionId]?.name || '';
+  }
+
+  /** Get all sessions as summary info (for Control Panel) */
+  getSessions(): SessionInfo[] {
+    return Object.values(this.data.sessions).map((s) => ({
+      id: s.id,
+      name: s.name,
+      lastActive: s.lastActive,
+      connected: s.connected,
+      messageCount: s.chatHistory.length,
+    }));
+  }
+
+  /** Get a specific session */
+  getSession(sessionId: string): Session | null {
+    return this.data.sessions[sessionId] || null;
+  }
+
+  // ── Conversation History (per-session) ──────────────────
+
+  /** Get LLM history for a session */
+  getLlmHistory(sessionId: string): LlmMessage[] {
+    const session = this.data.sessions[sessionId];
+    return session ? [...session.llmHistory] : [];
+  }
+
+  /** Get display chat history for a session */
+  getChatHistory(sessionId: string): DisplayMessage[] {
+    const session = this.data.sessions[sessionId];
+    return session ? [...session.chatHistory] : [];
+  }
+
+  /** Add a user message to a session */
+  addUserMessage(sessionId: string, content: string): void {
+    const session = this.getOrCreateSession(sessionId);
     const timestamp = Date.now();
 
-    this.data.llmHistory.push({ role: 'user', content });
-    if (this.data.llmHistory.length > 20) {
-      this.data.llmHistory = this.data.llmHistory.slice(-20);
+    session.llmHistory.push({ role: 'user', content });
+    if (session.llmHistory.length > 20) {
+      session.llmHistory = session.llmHistory.slice(-20);
     }
 
-    this.data.chatHistory.push({ role: 'user', text: content, timestamp });
-    if (this.data.chatHistory.length > 50) {
-      this.data.chatHistory = this.data.chatHistory.slice(-50);
+    session.chatHistory.push({ role: 'user', text: content, timestamp });
+    if (session.chatHistory.length > 50) {
+      session.chatHistory = session.chatHistory.slice(-50);
     }
 
+    session.lastActive = timestamp;
     this.scheduleSave();
   }
 
-  /** Add an assistant message to both histories */
-  addAssistantMessage(content: string): void {
+  /** Add an assistant message to a session */
+  addAssistantMessage(sessionId: string, content: string): void {
+    const session = this.getOrCreateSession(sessionId);
     const timestamp = Date.now();
 
-    this.data.llmHistory.push({ role: 'assistant', content });
-    if (this.data.llmHistory.length > 20) {
-      this.data.llmHistory = this.data.llmHistory.slice(-20);
+    session.llmHistory.push({ role: 'assistant', content });
+    if (session.llmHistory.length > 20) {
+      session.llmHistory = session.llmHistory.slice(-20);
     }
 
-    this.data.chatHistory.push({
+    session.chatHistory.push({
       role: 'assistant',
       text: content,
       timestamp,
     });
-    if (this.data.chatHistory.length > 50) {
-      this.data.chatHistory = this.data.chatHistory.slice(-50);
+    if (session.chatHistory.length > 50) {
+      session.chatHistory = session.chatHistory.slice(-50);
     }
 
+    session.lastActive = timestamp;
     this.scheduleSave();
   }
 
-  /** Clear conversation history (keeps owner name) */
-  clear(): void {
-    this.data.llmHistory = [];
-    this.data.chatHistory = [];
+  /** Clear conversation history for a session (keeps session metadata) */
+  clearSession(sessionId: string): void {
+    const session = this.data.sessions[sessionId];
+    if (session) {
+      session.llmHistory = [];
+      session.chatHistory = [];
+      this.logger.log(`Session ${sessionId} history cleared`);
+    }
 
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
 
-    // Save immediately with empty history (but keep owner)
     this.saveToDisk();
-    this.logger.log('Conversation history cleared (owner preserved)');
   }
 }

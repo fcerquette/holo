@@ -9,6 +9,7 @@ import {
 } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
+import { randomUUID } from 'crypto';
 import { LlmService } from './llm.service';
 import { ConversationStore } from './conversation-store.service';
 import { RagService } from './rag.service';
@@ -39,6 +40,9 @@ export class HoloGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private logger = new Logger('HoloGateway');
 
+  // Map socket.id → sessionId
+  private socketToSession = new Map<string, string>();
+
   private state: HoloState = {
     speaking: false,
     expression: 'neutral',
@@ -58,27 +62,58 @@ export class HoloGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly knowledgeService: KnowledgeService,
   ) {}
 
+  /** Get sessionId for a socket */
+  private getSessionId(client: Socket): string {
+    return this.socketToSession.get(client.id) || '';
+  }
+
   handleConnection(client: Socket) {
-    this.logger.log(`Client connected: ${client.id}`);
+    // Resolve session: client sends existing sessionId in handshake query
+    const requestedSessionId = (client.handshake.query.sessionId as string) || '';
+    let sessionId: string;
 
-    // Sync hologram visual state
-    client.emit('state:sync', this.state);
-
-    // Send persisted chat history
-    const history = this.conversationStore.getChatHistory();
-    if (history.length > 0) {
-      client.emit('chat:history', history);
-      this.logger.log(
-        `Sent ${history.length} history messages to ${client.id}`
-      );
+    if (requestedSessionId && this.conversationStore.getSession(requestedSessionId)) {
+      // Reconnecting to existing session
+      sessionId = requestedSessionId;
+      this.conversationStore.setSessionConnected(sessionId, true);
+      this.logger.log(`Client ${client.id} reconnected to session ${sessionId}`);
+    } else {
+      // New session
+      sessionId = randomUUID();
+      this.conversationStore.getOrCreateSession(sessionId);
+      this.logger.log(`Client ${client.id} → new session ${sessionId}`);
     }
 
-    // Send owner info or ask for name
+    this.socketToSession.set(client.id, sessionId);
+
+    // Tell the client its sessionId
+    client.emit('session:id', { sessionId });
+
+    // Sync hologram visual state (global)
+    client.emit('state:sync', this.state);
+
+    // Send persisted chat history for THIS session
+    const history = this.conversationStore.getChatHistory(sessionId);
+    if (history.length > 0) {
+      client.emit('chat:history', history);
+      this.logger.log(`Sent ${history.length} history messages for session ${sessionId}`);
+    }
+
+    // Send owner info or ask for name (global)
     const ownerName = this.conversationStore.getOwnerName();
     if (ownerName) {
       client.emit('owner:info', { name: ownerName });
     } else {
       client.emit('owner:askName');
+    }
+
+    // Send session name if it exists, or ask for one (only if owner is already set)
+    const sessionName = this.conversationStore.getSessionName(sessionId);
+    if (sessionName) {
+      client.emit('session:name', { name: sessionName });
+    } else if (ownerName) {
+      // Owner is set but this session has no name — ask
+      client.emit('session:askName');
     }
 
     // Send RAG status
@@ -96,10 +131,21 @@ export class HoloGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // Send knowledge status and content
     client.emit('knowledge:status', this.knowledgeService.getStatus());
     client.emit('knowledge:content', { content: this.knowledgeService.getContent() });
+
+    // Notify all clients about session list update
+    this.server.emit('sessions:update', this.conversationStore.getSessions());
   }
 
   handleDisconnect(client: Socket) {
-    this.logger.log(`Client disconnected: ${client.id}`);
+    const sessionId = this.getSessionId(client);
+    this.socketToSession.delete(client.id);
+
+    if (sessionId) {
+      this.conversationStore.setSessionConnected(sessionId, false);
+      this.logger.log(`Client ${client.id} disconnected (session ${sessionId})`);
+      // Notify remaining clients
+      this.server.emit('sessions:update', this.conversationStore.getSessions());
+    }
   }
 
   // ── Owner Setup ────────────────────────────────────────
@@ -112,25 +158,71 @@ export class HoloGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const name = data.name?.trim();
     if (!name) return;
 
+    const sessionId = this.getSessionId(client);
+
     this.conversationStore.setOwner(name);
     this.logger.log(`Owner set to: "${name}"`);
 
+    // Also set as session name (the owner is chatting from this session)
+    this.conversationStore.setSessionName(sessionId, name);
+    client.emit('session:name', { name });
+
     // Notify all clients
     this.server.emit('owner:info', { name });
+    this.server.emit('sessions:update', this.conversationStore.getSessions());
 
-    // Holo greets the new owner via LLM
+    // Holo greets the new owner via LLM (in the current session)
     const { text: greeting, expression } = await this.llmService.chat(
-      `Mi dueño/a se acaba de presentar, se llama "${name}". Saludalo/a con cariño y decile que ahora sos su mascota holográfica.`
+      `Mi dueño/a se acaba de presentar, se llama "${name}". Saludalo/a con cariño y decile que ahora sos su mascota holográfica.`,
+      sessionId,
     );
 
-    this.server.emit('chat:userMessage', {
-      text: `Me llamo ${name}`,
-    });
+    // Chat events go only to this session's socket
+    client.emit('chat:userMessage', { text: `Me llamo ${name}` });
+
     this.state.speaking = true;
     this.state.message = greeting;
     this.state.expression = expression as HoloExpression;
+
+    // Expression + speak go to all (global visual state)
     this.server.emit('state:expression', { expression });
-    this.server.emit('chat:response', { text: greeting });
+    client.emit('chat:response', { text: greeting });
+  }
+
+  // ── Session ─────────────────────────────────────────────
+
+  @SubscribeMessage('session:setName')
+  handleSessionSetName(
+    @MessageBody() data: { name: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const sessionId = this.getSessionId(client);
+    const name = data.name?.trim();
+    if (!sessionId || !name) return;
+
+    this.conversationStore.setSessionName(sessionId, name);
+    client.emit('session:name', { name });
+    this.server.emit('sessions:update', this.conversationStore.getSessions());
+    this.logger.log(`Session ${sessionId} name: "${name}"`);
+  }
+
+  @SubscribeMessage('sessions:getAll')
+  handleSessionsGetAll(@ConnectedSocket() client: Socket) {
+    client.emit('sessions:update', this.conversationStore.getSessions());
+  }
+
+  @SubscribeMessage('session:getHistory')
+  handleSessionGetHistory(
+    @MessageBody() data: { sessionId: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const history = this.conversationStore.getChatHistory(data.sessionId);
+    const session = this.conversationStore.getSession(data.sessionId);
+    client.emit('session:history', {
+      sessionId: data.sessionId,
+      name: session?.name || '',
+      messages: history,
+    });
   }
 
   // ── Chat ───────────────────────────────────────────────
@@ -140,33 +232,34 @@ export class HoloGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { text: string },
     @ConnectedSocket() client: Socket
   ) {
-    this.logger.log(`Chat from user: "${data.text}"`);
+    const sessionId = this.getSessionId(client);
+    this.logger.log(`Chat from session ${sessionId}: "${data.text}"`);
 
-    // Notify all clients that user sent a message
-    this.server.emit('chat:userMessage', { text: data.text });
-
-    // Show "thinking" state
-    this.server.emit('chat:thinking', { thinking: true });
+    // Chat events go only to this session's socket
+    client.emit('chat:userMessage', { text: data.text });
+    client.emit('chat:thinking', { thinking: true });
 
     try {
-      // Get LLM response with expression (also persists to ConversationStore)
-      const { text: response, expression } = await this.llmService.chat(data.text);
+      // Get LLM response (per-session history)
+      const { text: response, expression } = await this.llmService.chat(data.text, sessionId);
 
-      // Stop thinking
-      this.server.emit('chat:thinking', { thinking: false });
+      client.emit('chat:thinking', { thinking: false });
 
-      // Auto-set expression from LLM response
+      // Expression is global visual state
       this.state.expression = expression as HoloExpression;
       this.server.emit('state:expression', { expression });
 
-      // Broadcast the response - display will handle TTS
+      // Chat response + speak go to the session's socket
       this.state.speaking = true;
       this.state.message = response;
-      this.server.emit('chat:response', { text: response });
+      client.emit('chat:response', { text: response });
+
+      // Also broadcast speak to HoloDisplay (so TTS works on display)
+      this.server.emit('state:speak', { text: response });
     } catch (error: unknown) {
       this.logger.error(`Chat error: ${(error as Error).message}`);
-      this.server.emit('chat:thinking', { thinking: false });
-      this.server.emit('chat:response', {
+      client.emit('chat:thinking', { thinking: false });
+      client.emit('chat:response', {
         text: 'Uy, se me trabó el cerebro. Probá de nuevo.',
       });
     }
@@ -226,10 +319,15 @@ export class HoloGateway implements OnGatewayConnection, OnGatewayDisconnect {
   // ── History management ─────────────────────────────────
 
   @SubscribeMessage('clearHistory')
-  handleClearHistory() {
-    this.llmService.clearHistory();
-    this.server.emit('chat:historyCleared');
-    this.logger.log('Conversation history cleared');
+  handleClearHistory(
+    @MessageBody() data: { sessionId?: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const targetSession = data?.sessionId || this.getSessionId(client);
+    this.llmService.clearHistory(targetSession);
+    client.emit('chat:historyCleared');
+    this.server.emit('sessions:update', this.conversationStore.getSessions());
+    this.logger.log(`Session ${targetSession} history cleared`);
   }
 
   @SubscribeMessage('getState')

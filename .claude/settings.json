@@ -1,4 +1,7 @@
 {
+  "enabledPlugins": {
+    "nx@nx-claude-plugins": true
+  },
   "extraKnownMarketplaces": {
     "nx-claude-plugins": {
       "source": {
@@ -7,7 +10,9 @@
       }
     }
   },
-  "enabledPlugins": {
-    "nx@nx-claude-plugins": true
+  "permissions": {
+    "allow": [
+      "Bash(git add apps/holo-api/src/app/knowledge.service.ts apps/holo-api/src/app/app.module.ts apps/holo-api/src/app/holo.gateway.ts apps/holo-api/src/app/llm.service.ts apps/holo-display/src/stores/holo.ts apps/holo-display/src/composables/useSocket.ts apps/holo-display/src/views/ControlPanel.vue)"
+    ]
   }
 }

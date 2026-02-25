@@ -22,6 +22,9 @@ const lastResponse = ref('');
 // Owner setup
 const ownerNameInput = ref('');
 
+// Session name setup
+const sessionNameInput = ref('');
+
 const is2D = computed(() => holo.displayMode === '2d');
 
 async function activate() {
@@ -116,6 +119,14 @@ function submitOwnerName() {
   holo.ownerName = name;
 }
 
+function submitSessionName() {
+  const name = sessionNameInput.value.trim();
+  if (!name) return;
+  socket.sessionSetName(name);
+  holo.showSessionSetup = false;
+  holo.setSessionName(name);
+}
+
 onMounted(() => {
   socket.connect();
 });
@@ -165,6 +176,36 @@ onUnmounted(() => {
             autofocus
           />
           <button class="owner-submit-btn" @click="submitOwnerName" :disabled="!ownerNameInput.trim()">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="22" y1="2" x2="11" y2="13"/>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Session name setup — shown when owner is set but this session has no name -->
+    <div v-if="activated && !holo.showOwnerSetup && holo.showSessionSetup" class="owner-setup-overlay">
+      <div class="owner-setup-card">
+        <div class="owner-holo-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#00f0ff" stroke-width="1.5">
+            <circle cx="12" cy="8" r="4"/>
+            <path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/>
+          </svg>
+        </div>
+        <p class="owner-setup-title">Hola!</p>
+        <p class="owner-setup-subtitle">Como te llamas?</p>
+        <div class="owner-input-row">
+          <input
+            v-model="sessionNameInput"
+            type="text"
+            placeholder="Tu nombre..."
+            class="owner-input"
+            @keyup.enter="submitSessionName"
+            autofocus
+          />
+          <button class="owner-submit-btn" @click="submitSessionName" :disabled="!sessionNameInput.trim()">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="22" y1="2" x2="11" y2="13"/>
               <polygon points="22 2 15 22 11 13 2 9 22 2"/>

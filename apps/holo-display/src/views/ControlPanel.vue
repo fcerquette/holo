@@ -133,6 +133,30 @@ function onFileSelected(event: Event) {
   target.value = ''; // reset for re-upload
 }
 
+// ── Session ──────────────────────────────────────────────
+
+function formatTimeAgo(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'ahora';
+  if (mins < 60) return `hace ${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `hace ${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `hace ${days}d`;
+}
+
+function handleViewSession(sessionId: string) {
+  socket.sessionGetHistory(sessionId);
+}
+
+function handleClearSessionHistory(sessionId: string) {
+  socket.clearHistory(sessionId);
+  if (holo.viewingSessionId === sessionId) {
+    holo.clearViewingSession();
+  }
+}
+
 // ── SQL Agent ────────────────────────────────────────────
 
 function handleAddSqlConnection() {
@@ -186,6 +210,7 @@ function handleAddSqlConnection() {
         <Tab value="2"><i class="pi pi-cog mr-1"></i> Config</Tab>
         <Tab value="3"><i class="pi pi-user mr-1"></i> Personalidad</Tab>
         <Tab value="4"><i class="pi pi-book mr-1"></i> Conocimiento</Tab>
+        <Tab value="5"><i class="pi pi-users mr-1"></i> Sesiones</Tab>
       </TabList>
 
       <TabPanels>
@@ -280,6 +305,11 @@ function handleAddSqlConnection() {
         <!-- ═══════════════════════════════════════════════ -->
         <TabPanel value="1">
           <div class="panel-content">
+            <!-- Session name badge -->
+            <div v-if="holo.sessionName" class="session-badge">
+              <i class="pi pi-user mr-1"></i> {{ holo.sessionName }}
+            </div>
+
             <!-- Chat section -->
             <div class="section chat-section">
               <h2 class="section-title">
@@ -745,6 +775,96 @@ function handleAddSqlConnection() {
             </div>
           </div>
         </TabPanel>
+        <!-- ═══════════════════════════════════════════════ -->
+        <!-- TAB 6: Sesiones                                -->
+        <!-- ═══════════════════════════════════════════════ -->
+        <TabPanel value="5">
+          <div class="panel-content">
+            <div class="section">
+              <h2 class="section-title">
+                <i class="pi pi-users mr-2"></i> Sesiones
+              </h2>
+              <p class="text-sm text-gray-400 mb-3">
+                Cada dispositivo que se conecta tiene su propia sesion de chat.
+              </p>
+
+              <!-- Session list -->
+              <div v-if="holo.sessions.length === 0" class="text-sm text-gray-500 text-center py-4">
+                No hay sesiones registradas
+              </div>
+              <div
+                v-for="session in holo.sessions"
+                :key="session.id"
+                class="session-item"
+                :class="{ 'session-current': session.id === holo.sessionId }"
+              >
+                <div class="flex items-center gap-2 flex-1 min-w-0">
+                  <span
+                    class="inline-block w-2 h-2 rounded-full flex-shrink-0"
+                    :class="session.connected ? 'bg-green-400' : 'bg-gray-500'"
+                  ></span>
+                  <div class="min-w-0 flex-1">
+                    <span class="text-sm text-gray-300 block truncate">
+                      {{ session.name || 'Sin nombre' }}
+                      <span v-if="session.id === holo.sessionId" class="text-cyan-400 text-xs">(vos)</span>
+                    </span>
+                    <span class="text-xs text-gray-500 block">
+                      {{ session.messageCount }} mensajes &middot; {{ formatTimeAgo(session.lastActive) }}
+                    </span>
+                  </div>
+                </div>
+                <div class="flex gap-1 flex-shrink-0">
+                  <Button
+                    icon="pi pi-eye"
+                    size="small"
+                    text
+                    @click="handleViewSession(session.id)"
+                    v-tooltip.top="'Ver chat'"
+                  />
+                  <Button
+                    icon="pi pi-trash"
+                    size="small"
+                    text
+                    severity="danger"
+                    @click="handleClearSessionHistory(session.id)"
+                    v-tooltip.top="'Limpiar historial'"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- Viewing a session's chat -->
+            <div v-if="holo.viewingSessionId" class="section">
+              <div class="flex items-center justify-between mb-2">
+                <h2 class="section-title mb-0">
+                  <i class="pi pi-comments mr-2"></i>
+                  Chat de {{ holo.viewingSessionName || 'Sin nombre' }}
+                </h2>
+                <Button
+                  icon="pi pi-times"
+                  size="small"
+                  text
+                  @click="holo.clearViewingSession()"
+                />
+              </div>
+
+              <div class="chat-messages">
+                <div v-if="holo.viewingSessionHistory.length === 0" class="text-gray-500 text-sm text-center py-4">
+                  No hay mensajes en esta sesion
+                </div>
+                <div
+                  v-for="(msg, i) in holo.viewingSessionHistory"
+                  :key="i"
+                  class="chat-bubble"
+                  :class="msg.role === 'user' ? 'chat-user' : 'chat-assistant'"
+                >
+                  <span class="chat-role">{{ msg.role === 'user' ? 'Usuario' : 'Holo' }}</span>
+                  <p>{{ msg.text }}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </TabPanel>
       </TabPanels>
     </Tabs>
   </div>
@@ -1035,5 +1155,38 @@ function handleAddSqlConnection() {
 
 .knowledge-editor::placeholder {
   color: #4b5563;
+}
+
+/* Session styles */
+.session-badge {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(0, 240, 255, 0.08);
+  color: #00f0ff;
+  padding: 0.35rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: 1px solid rgba(0, 240, 255, 0.2);
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid #374151;
+}
+
+.session-item:last-child {
+  border-bottom: none;
+}
+
+.session-current {
+  background: rgba(0, 240, 255, 0.04);
+  margin: 0 -0.5rem;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  border-radius: 6px;
 }
 </style>

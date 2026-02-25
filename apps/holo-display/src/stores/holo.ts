@@ -42,6 +42,14 @@ export interface PersonalityStatus {
   preset: 'formal' | 'informal' | 'standard' | 'nino' | 'adulto-mayor';
 }
 
+export interface SessionInfo {
+  id: string;
+  name: string;
+  lastActive: number;
+  connected: boolean;
+  messageCount: number;
+}
+
 export const useHoloStore = defineStore('holo', () => {
   const speaking = ref(false);
   const thinking = ref(false);
@@ -55,6 +63,15 @@ export const useHoloStore = defineStore('holo', () => {
   // Owner
   const ownerName = ref('');
   const showOwnerSetup = ref(false);
+
+  // Session
+  const sessionId = ref('');
+  const sessionName = ref('');
+  const showSessionSetup = ref(false);
+  const sessions = ref<SessionInfo[]>([]);
+  const viewingSessionId = ref('');
+  const viewingSessionHistory = ref<ChatMessage[]>([]);
+  const viewingSessionName = ref('');
 
   // RAG
   const ragStatus = ref<RagStatus>({
@@ -149,6 +166,30 @@ export const useHoloStore = defineStore('holo', () => {
     knowledgeChunkCount.value = status.chunkCount;
   }
 
+  function setSessionId(id: string) {
+    sessionId.value = id;
+  }
+
+  function setSessionName(name: string) {
+    sessionName.value = name;
+  }
+
+  function updateSessions(list: SessionInfo[]) {
+    sessions.value = list;
+  }
+
+  function setViewingSession(id: string, name: string, messages: ChatMessage[]) {
+    viewingSessionId.value = id;
+    viewingSessionName.value = name;
+    viewingSessionHistory.value = messages;
+  }
+
+  function clearViewingSession() {
+    viewingSessionId.value = '';
+    viewingSessionName.value = '';
+    viewingSessionHistory.value = [];
+  }
+
   return {
     speaking,
     thinking,
@@ -160,6 +201,13 @@ export const useHoloStore = defineStore('holo', () => {
     displayMode,
     ownerName,
     showOwnerSetup,
+    sessionId,
+    sessionName,
+    showSessionSetup,
+    sessions,
+    viewingSessionId,
+    viewingSessionHistory,
+    viewingSessionName,
     ragStatus,
     ragIndexing,
     sqlStatus,
@@ -181,5 +229,10 @@ export const useHoloStore = defineStore('holo', () => {
     setSqlRefreshing,
     updateKnowledgeContent,
     updateKnowledgeStatus,
+    setSessionId,
+    setSessionName,
+    updateSessions,
+    setViewingSession,
+    clearViewingSession,
   };
 });
